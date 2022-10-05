@@ -1,0 +1,24 @@
+{
+  "template": "https://github.com/hypothesis/cookiecutters",
+  "checkout": null,
+  "directory": "pypackage",
+  "ignore": [],
+  "extra_context": {
+    "name": "gh-pr-upsert",
+    "package_name": "gh_pr_upsert",
+    "slug": "gh-pr-upsert",
+    "short_description": "Upsert GitHub pull requests.",
+    "python_versions": "3.10.6, 3.9.13",
+    "github_owner": "hypothesis",
+    "copyright_holder": "Hypothesis",
+    "visibility": "public",
+    "console_script": "yes",
+    "devdata": "no",
+    "services": "no",
+    "dependabot_pip_interval": "monthly",
+    "__entry_point": "gh-pr-upsert",
+    "__github_url": "https://github.com/hypothesis/gh-pr-upsert",
+    "__pypi_url": "https://pypi.org/project/gh-pr-upsert",
+    "__hdev_project_type": "library"
+  }
+}
