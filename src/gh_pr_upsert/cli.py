@@ -4,6 +4,7 @@ from importlib.metadata import version
 from subprocess import CalledProcessError
 
 from gh_pr_upsert import core
+from gh_pr_upsert import git
 from gh_pr_upsert.core import PRUpsertError
 
 
@@ -21,7 +22,7 @@ def cli(_argv=None):
         sys.exit()
 
     try:
-        core.pr_upsert()
+        core.pr_upsert("origin", "main", git.current_branch(), "Apply updates from cookiecutter")
     except PRUpsertError as err:
         print(err.message)
         sys.exit(err.exit_status)

@@ -1,107 +1,225 @@
-"""Helper functions for working with Git and GitHub."""
-from functools import lru_cache
+"""Helpers for working with Git and GitHub."""
+from dataclasses import dataclass, field
 from subprocess import CalledProcessError
+from typing import Optional
 
 from gh_pr_upsert.run import run
 
 
-def authenticated_username():
-    """Return the user's authenticated username from GitHub CLI."""
-    return run(["gh", "api", "/user"], json=True)["login"]
+@dataclass(frozen=True)
+class Commit:
+    """A Git commit."""
+
+    sha: str = field(compare=False)
+    author_name: str = field(repr=False)
+    author_email: str = field(repr=False)
+    committer_name: str = field(repr=False)
+    committer_email: str = field(repr=False)
+    message: str = field(repr=False)
+    patch: str = field(repr=False)
+
+    @classmethod
+    def make(cls, sha: str):
+        """Return the commit with the given SHA."""
+
+        def git_show(format_string: str) -> str:
+            """Return the output of `git show` with the given --format string."""
+            return run(["git", "show", "--no-patch", f"--format={format_string}", sha])
+
+        return cls(
+            sha=sha,
+            author_name=git_show("%an"),
+            author_email=git_show("%ae"),
+            committer_name=git_show("%cn"),
+            committer_email=git_show("%ce"),
+            message=git_show("%B"),
+            patch=run(["git", "show", "--format=", sha]),
+        )
 
 
-def pr_diff():
-    """Return the diff of the open PR for the current branch."""
-    return run(["gh", "pr", "diff"])
+@dataclass(frozen=True)
+class GitHubRepo:
+    """A GitHub repo."""
+
+    owner: str
+    name: str
+    default_branch: str = field(repr=False, compare=False)
+    url: str = field(repr=False, compare=False)
+    json: Optional[dict] = field(repr=False, compare=False)
+
+    @classmethod
+    def make(cls, url: str):
+        """Return the GitHub repo for the given URL."""
+        json = run(
+            ["gh", "repo", "view", "--json", "owner,name,defaultBranchRef", url],
+            json=True,
+        )
+
+        return cls(
+            owner=json["owner"]["login"],
+            name=json["name"],
+            default_branch=json["defaultBranchRef"]["name"],
+            url=url,
+            json=json,
+        )
+
+    def create_pull_request(self, base_branch: str, head_branch: str, title: str):
+        """Open a new pull request."""
+
+        json = run(
+            [
+                "gh",
+                "api",
+                "--method",
+                "POST",
+                f"/repos/{self.owner}/{self.name}/pulls",
+                "-f",
+                f"base={base_branch}",
+                "-f",
+                f"head={head_branch}",
+                "-f",
+                f"title={title}",
+            ],
+            json=True,
+        )
+        return PullRequest.make(repo=self, json=json)
+
+    def pull_requests(self):
+        """Return the list of open pull requests on this GitHub repo."""
+        json = run(
+            ["gh", "api", "--paginate", f"/repos/{self.owner}/{self.name}/pulls"],
+            json=True,
+        )
+
+        return [
+            PullRequest.make(repo=self, json=pull_request_json)
+            for pull_request_json in json
+        ]
+
+    def pull_request(self, base_branch: str, head_branch: str):
+        """Return the open PR for base_branch and head_branch, or None."""
+        for pull_request in self.pull_requests():
+            if pull_request.base_label != f"{self.owner}:{base_branch}":
+                continue
+
+            if pull_request.head_label != f"{self.owner}:{head_branch}":
+                continue
+
+            return pull_request
+
+        return None
 
 
-@lru_cache(maxsize=1)
-def pr():  # pylint:disable=invalid-name
-    """Return a dict of info about the open PR for the current branch.
+@dataclass(frozen=True)
+class PullRequest:
+    """A GitHub pull request."""
 
-    Return `None` if there's no open PR for the current branch.
+    repo: str
+    number: int
+    html_url: str = field(compare=False, repr=False)
+    base_label: str = field(compare=False, repr=False)
+    head_label: str = field(compare=False, repr=False)
+    json: Optional[dict] = field(compare=False, repr=False)
+
+    @classmethod
+    def make(cls, repo: GitHubRepo, json: dict):
+        """Create a PullRequest from the given GitHub API JSON data."""
+        return PullRequest(
+            repo=repo,
+            html_url=json["html_url"],
+            number=json["number"],
+            base_label=json["base"]["label"],
+            head_label=json["head"]["label"],
+            json=json,
+        )
+
+    def close(self) -> None:
+        """Close this PullRequest."""
+        run(
+            [
+                "gh",
+                "api",
+                "--method",
+                "PATCH",
+                f"/repos/{self.repo.owner}/{self.repo.name}/pulls/{self.number}",
+                "-f",
+                "state=closed",
+            ]
+        )
+
+
+def branch_exists(remote: str, branch: str) -> bool:
+    """Return True if `remote` has a branch named `branch`.
+
+    This is based on the local git repo's record of `remote` (from the last
+    time it cloned or fetched from `remote`). False positives and negatives
+    are possible if this info is out of date.
     """
     try:
-        response = run(["gh", "pr", "view", "--json", "state,commits"], json=True)
-    except CalledProcessError:
-        return None
+        run(["git", "show-ref", f"refs/remotes/{remote}/{branch}"])
+    except CalledProcessError as err:
+        if err.returncode == 1:
+            return False
+        raise
 
-    if response["state"] != "OPEN":
-        return None
-
-    return response
-
-
-@lru_cache(maxsize=1)
-def github_repo():
-    """Return a dict of info about the GitHub repo."""
-    return run(
-        ["gh", "repo", "view", "--json", "url,sshUrl,defaultBranchRef"], json=True
-    )
+    return True
 
 
-def default_branch():
-    """Return the name of the GitHub repo's default branch."""
-    return github_repo()["defaultBranchRef"]["name"]
+def configured_email() -> str:
+    """Return the user's email address from `git config`."""
+    return run(["git", "config", "--get", "user.email"])
 
 
-def push_urls():
-    """Return a list of the GitHub repo's push URLs."""
-    return [github_repo()["url"] + ".git", github_repo()["sshUrl"]]
+def configured_username() -> str:
+    """Return the user's username from `git config`."""
+    return run(["git", "config", "--get", "user.name"])
 
 
-@lru_cache(maxsize=1)
-def current_branch():
-    """Return the name of the current git branch."""
+def current_branch() -> str:
+    """Return the name of the current local git branch."""
     return run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"])
 
 
-def committed_changes():
-    """Return the diff of the current local branch to the GitHub default branch."""
-    return run(["git", "diff", f"{remote()}/{default_branch()}..."])
+def diff(branches: list[str]) -> str:
+    """Return the output of `git diff <branch>...` for the given `branches`."""
+    return run(["git", "diff", *branches])
 
 
-def pr_committers():
-    """Return the GitHub usernames of all committers to the current branch's PR."""
-    committers = set()
-    for commit_ in pr()["commits"]:
-        for author in commit_["authors"]:
-            committers.add(author["login"])
-    return committers
+def fetch_url(remote: str) -> str:
+    """Return the given `remote`'s fetch URL."""
+    return run(["git", "remote", "get-url", remote])
 
 
-def remotes():
-    """Return a list of the local git repo's remotes."""
-    return run(["git", "remote"]).split()
+def log(branches: list[str], options: Optional[list[str]] = None) -> list[Commit]:
+    """Return the commits from `git log <branch>...` for the given `branches`."""
+    if options is None:
+        options = []
+
+    return [
+        Commit.make(sha)
+        for sha in run(["git", "log", *options, *branches, "--format=%H"]).split()
+    ]
 
 
-def push_url(remote_):
-    """Return the push URL of the given remote."""
-    return run(["git", "remote", "get-url", "--push", remote_])
+def push(remote: str, branch: str) -> None:
+    """Push `branch` to `remote/branch`.
 
+    If `remote/branch` doesn't exist it'll be created.
 
-def remote():
+    If `remote/branch` does exist it'll be updated by force-pushing.
+
+    This will remove any commits from `remote/branch` that don't exist on the
+    local `branch`. To see what commits will be removed run:
+    `git log remote/branch ^branch`.
     """
-    Return the local git remote name for the GitHub repo, e.g. "origin".
-
-    Return the name of the local git remote that corresponds to the GitHub repo
-    that GitHub CLI chooses for this git repo.
-    """
-    for remote_ in remotes():
-        if push_url(remote_) in push_urls():
-            return remote_
-
-    raise ValueError("Couldn't find a local git remote that matches the GitHub repo")
+    run(["git", "push", "--force-with-lease", remote, f"{branch}:{branch}"])
 
 
-def push(force=False):
-    """Push the current branch to GitHub."""
-    if force:
-        run(["git", "push", "--force", remote(), current_branch()])
-    else:
-        run(["git", "push", remote(), current_branch()])
+def there_are_merge_commits(remote: str, base_branch: str, head_branch: str) -> bool:
+    """Return True if head_branch or remote_branch has merge commits that aren't on remote/base_branch."""
+    branches = [head_branch, f"^{remote}/{base_branch}"]
 
+    if branch_exists(remote, head_branch):
+        branches.append(f"{remote}/{head_branch}")
 
-def create_pr():
-    """Open a new PR for the current branch."""
-    run(["gh", "pr", "create", "--fill"])
+    return bool(log(branches, options=["--merges"]))
