@@ -66,7 +66,7 @@ Then to set up your development environment:
 
 ```terminal
 git clone https://github.com/hypothesis/gh-pr-upsert.git
-cd gh_pr_upsert
+cd gh-pr-upsert
 make help
 ```
 
