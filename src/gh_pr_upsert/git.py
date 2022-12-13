@@ -4,8 +4,8 @@ from functools import cache
 from subprocess import CalledProcessError
 from typing import Optional
 
-from gh_pr_upsert.run import run
 from gh_pr_upsert.exceptions import OtherPeopleError
+from gh_pr_upsert.run import run
 
 
 @dataclass(frozen=True)

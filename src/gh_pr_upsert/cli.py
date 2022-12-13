@@ -4,8 +4,8 @@ from importlib.metadata import version
 from subprocess import CalledProcessError
 
 from gh_pr_upsert import core
-from gh_pr_upsert.git import current_branch, GitHubRepo, fetch_url
 from gh_pr_upsert.core import PRUpsertError
+from gh_pr_upsert.git import GitHubRepo, current_branch, fetch_url
 
 
 def cli(_argv=None):
