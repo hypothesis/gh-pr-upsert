@@ -5,19 +5,13 @@ from subprocess import CalledProcessError
 from typing import Optional
 
 from gh_pr_upsert.run import run
+from gh_pr_upsert.exceptions import OtherPeopleError
 
 
 @dataclass(frozen=True)
 class User:
     name: str
     email: str
-
-    @classmethod
-    def get_configured_user(cls):
-        return cls(
-            name=run(["git", "config", "--get", "user.name"]),
-            email=run(["git", "config", "--get", "user.email"]),
-        )
 
 
 @dataclass(frozen=True)
@@ -154,12 +148,7 @@ class PullRequest:
 
 
 def branch_exists(remote: str, branch: str) -> bool:
-    """Return True if `remote` has a branch named `branch`.
-
-    This is based on the local git repo's record of `remote` (from the last
-    time it was cloned from or fetched from `remote`). False positives and
-    negatives are possible if this local info is out of date.
-    """
+    """Return True if `remote` has a branch named `branch`."""
     try:
         run(["git", "show-ref", f"refs/remotes/{remote}/{branch}"])
     except CalledProcessError as err:
@@ -168,6 +157,19 @@ def branch_exists(remote: str, branch: str) -> bool:
         raise
 
     return True
+
+
+def configured_user():
+    """Return the configured git user."""
+    return User(
+        name=run(["git", "config", "--get", "user.name"]),
+        email=run(["git", "config", "--get", "user.email"]),
+    )
+
+
+def contributors(branches: list[str]) -> list[User]:
+    """Return the list of users who've contributed to the given branches."""
+    return set([commit.author for commit in log(branches)])
 
 
 def current_branch() -> str:
@@ -183,48 +185,13 @@ def diff(branches: list[str]) -> str:
 def log(branches: list[str]) -> list[Commit]:
     """Return the commits from `git log <branch>...` for the given `branches`."""
     return [
-        Commit.get(sha) for sha in run(["git", "log", *branches, "--format=%H"]).split()
+        Commit.get(sha)
+        for sha in run(
+            ["git", "log", "--ignore-missing", *branches, "--format=%H"]
+        ).split()
     ]
 
 
-def push(base_remote: str, head_remote: str, branch: str) -> None:
-    """Force-push <branch> to <head_remote>/<branch>.
-
-    If <head_remote>/<branch> doesn't exist the branch will be created.
-
-    If <head_remote>/<branch> already exists it'll be force-pushed.
-    WARNING: This may remove some or all of the commits from
-    <head_remote>/<branch>! To see which commits will be removed run:
-
-        log(f"{head_remote}/{branch}", f"^{branch}")
-
-    If <head_remote>/<branch> exists and contains commits that were not
-    authored by the configured git user (from `git config`) and are not on
-    base_remote's default branch then raise because we don't want to
-    potentially remove other user's commits.
-    """
-    base_repo = GitHubRepo.get(base_remote)
-    head_repo = GitHubRepo.get(head_remote)
-
-    if branch_exists(head_remote, branch):
-        # The commits that are on the remote branch currently.
-        remote_commits = log(
-            [f"{head_remote}/{branch}", f"^{base_remote}/{base_repo.default_branch}"]
-        )
-
-        # The commits that *will* be on the remote branch if we force-push it.
-        local_commits = log([branch, f"^{base_remote}/{base_repo.default_branch}"])
-
-        # The commits that will be removed from the remote branch if we force-push it.
-        commits_that_would_be_removed = [
-            commit for commit in remote_commits if commit not in local_commits
-        ]
-
-        for commit in commits_that_would_be_removed:
-            if commit.author != User.get_configured_user():
-                raise RuntimeError("It's all wrong")
-
-    # If we get here then it's safe to force-push the branch:
-    # either the remote branch doesn't exist or it contains only commits
-    # authored by the configured git user.
-    run(["git", "push", "--force-with-lease", head_remote, f"{branch}:{branch}"])
+def push(remote: str, branch: str) -> None:
+    """Force-push <branch> to <remote>/<branch>."""
+    run(["git", "push", "--force-with-lease", remote, f"{branch}:{branch}"])

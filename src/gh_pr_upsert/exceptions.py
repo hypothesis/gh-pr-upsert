@@ -1,0 +1,17 @@
+class PRUpsertError(Exception):
+    """Base class for all exceptions deliberately raised by gh_pr_upsert."""
+
+
+class OnDefaultBranchError(PRUpsertError):
+    message = "You must change to a different branch before creating a PR"
+    exit_status = 2
+
+
+class NoChangesError(PRUpsertError):
+    message = "Your branch has no changes compared to the default branch"
+    exit_status = 3
+
+
+class OtherPeopleError(PRUpsertError):
+    message = "Other people have pushed commits to the PR, not updating it"
+    exit_status = 4

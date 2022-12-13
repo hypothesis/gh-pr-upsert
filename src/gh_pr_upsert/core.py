@@ -1,80 +1,69 @@
 from gh_pr_upsert import git
+from gh_pr_upsert.exceptions import SameBranchError
 
 
-class PRUpsertError(Exception):
-    """Base class for all exceptions deliberately raised by this module."""
+def pr_upsert(base_remote, base_branch, head_remote, title, body, close_comment):
+    # The repo where we'll open the PR.
+    base_repo = git.GitHubRepo.get(base_remote)
 
+    # The branch that the PR will request to be merged into.
+    base_branch = base_repo.default_branch
 
-class OnDefaultBranchError(PRUpsertError):
-    message = "You must change to a different branch before creating a PR"
-    exit_status = 2
+    # The repo that we'll push the branch containing our commits to.
+    head_repo = git.GitHubRepo.get(head_remote)
 
+    # The branch that contains the commits we want to push.
+    head_branch = git.current_branch()
 
-class NoChangesError(PRUpsertError):
-    message = "Your branch has no changes compared to the default branch"
-    exit_status = 3
-
-
-class OtherPeopleError(PRUpsertError):
-    message = "Other people have pushed commits to the PR, not updating it"
-    exit_status = 4
-
-
-@cache
-def safe_to_modify_pr(base_remote, base_branch, head_remote, head_branch) -> bool:
-    """Return True if no one else has contributed to the PR."""
-
-    if not git.branch_exists(head_remote, head_branch):
-        return True
-
-    # The commits that *will* be in the PR if we force-push it.
-    local_commits = git.log(["f{head_branch}", f"^{base_remote}/{base_branch}"])
-
-    # The commits that are in the PR currently.
-    remote_commits = git.log(
-        ["f{head_remote}/{head_branch}", f"^{base_remote}/{base_branch}"]
-    )
-
-    if local_commits == remote_commits:
-        return True
-
-    # The commits that will be removed from the PR if we force-push it.
-    commits_that_would_be_removed = [
-        commit for commit in remote_commits if commit not in local_commits
-    ]
-
-    for commit in commits_that_would_be_removed:
-        if not (
-            commit.author_name == git.configured_username()
-            and commit.author_email == git.configured_email()
-        ):
-            return False
-
-    return True
-
-
-def pr_upsert(base_remote, base_branch, head_remote, title, body):
-    base_repo = git.GitHubRepo.make(git.fetch_url(base_remote))
-    head_repo = git.GitHubRepo.make(git.fetch_url(head_remote))
-
-    if base_repo == head_repo and git.current_branch() == base_branch:
+    # You can't send a PR to merge one branch into itself.
+    if base_repo == head_repo and base_branch == head_branch:
         raise SameBranchError()
 
-    if not git.diff([git.current_branch(), f"^{base_remote}/{base_branch}"]):
-        existing_pr = git.existing_pr(base_remote, base_branch, head_branch)
-        if existing_pr and safe_to_modify_pr():
-            existing_pr.close()
+    # The list of users who have commits on the remote branch.
+    contributors = set(
+        [
+            commit.author
+            for commit in git.log(
+                f"{head_remote}/{head_branch}",
+                f"^{head_branch}",
+                f"^{base_remote}/{base_branch}",
+            )
+        ]
+    )
+
+    # It's safe to modify the remote branch if only the current user has commits on it.
+    safe_to_modify = contributors == {git.configured_user()}
+
+    # The changes that we have locally.
+    local_diff = git.diff([head_branch, f"^{base_remote}/{base_branch}"])
+
+    # The existing PR or None.
+    pr = PullRequest.get(base_repo, head_repo, head_branch)
+
+    # If there are no local changes then close any existing PR.
+    if not local_diff:
+        if pr and safe_to_modify:
+            pr.close(close_comment)
 
         raise NoChangesError()
 
-    if safe_to_modify_pr():
-        git.push(base_remote, git.current_branch(), base_branch)
-
-    pr = base_repo.get_pull_request(base_branch, head_repo, head_branch)
-
-    if not pr:
-        pr = github.create_pull_request(
-            base_branch, head_repo, head_branch, title, body
+    # The changes that already exist on the remote branch.
+    if git.branch_exists(head_remote, head_branch):
+        remote_diff = git.diff(
+            [f"{head_remote}/{head_branch}", f"^{base_remote}/{base_branch}"]
         )
+    else:
+        remote_diff = None
 
-    print(pr.html_url)
+    # Force-push any local changes to the remote branch.
+    if local_diff != remote_diff:
+        if not safe_to_modify:
+            raise OtherPeopleError()
+
+        git.push(head_remote, head_branch)
+
+    # Create a PR if there isn't one already.
+    if not pr:
+        pr = github.PullRequest.create()
+
+    print(pr.url)
