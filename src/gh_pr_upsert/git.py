@@ -1,5 +1,6 @@
 """Helpers for working with Git and GitHub."""
 from dataclasses import dataclass, field
+from functools import cache
 from subprocess import CalledProcessError
 from typing import Optional
 
@@ -7,143 +8,147 @@ from gh_pr_upsert.run import run
 
 
 @dataclass(frozen=True)
-class Commit:
-    """A Git commit."""
-
-    sha: str = field(compare=False)
-    author_name: str = field(repr=False)
-    author_email: str = field(repr=False)
-    committer_name: str = field(repr=False)
-    committer_email: str = field(repr=False)
-    message: str = field(repr=False)
-    patch: str = field(repr=False)
+class User:
+    name: str
+    email: str
 
     @classmethod
-    def make(cls, sha: str):
-        """Return the commit with the given SHA."""
+    def get_configured_user(cls):
+        return cls(
+            name=run(["git", "config", "--get", "user.name"]),
+            email=run(["git", "config", "--get", "user.email"]),
+        )
 
+
+@dataclass(frozen=True)
+class Commit:
+    sha: str
+    author: User
+
+    @classmethod
+    def get(cls, sha: str):
         def git_show(format_string: str) -> str:
-            """Return the output of `git show` with the given --format string."""
             return run(["git", "show", "--no-patch", f"--format={format_string}", sha])
 
+        # `git show` doesn't have a machine-readable output mode (like a --json
+        # mode) and I don't fancy writing code to parse its human-readable
+        # output. So call `git show` multiple times with a different --format
+        # string each time to extract the different attributes of the commit.
         return cls(
-            sha=sha,
-            author_name=git_show("%an"),
-            author_email=git_show("%ae"),
-            committer_name=git_show("%cn"),
-            committer_email=git_show("%ce"),
-            message=git_show("%B"),
-            patch=run(["git", "show", "--format=", sha]),
+            sha=git_show("%H"),  # Call git to make sure we get the full SHA.
+            author=User(
+                name=git_show("%an"),
+                email=git_show("%ae"),
+            ),
         )
 
 
 @dataclass(frozen=True)
 class GitHubRepo:
-    """A GitHub repo."""
-
     owner: str
     name: str
+    name_with_owner: str
     default_branch: str = field(repr=False, compare=False)
     url: str = field(repr=False, compare=False)
     json: Optional[dict] = field(repr=False, compare=False)
 
     @classmethod
-    def make(cls, url: str):
-        """Return the GitHub repo for the given URL."""
+    def get(cls, remote: str):
         json = run(
-            ["gh", "repo", "view", "--json", "owner,name,defaultBranchRef", url],
+            [
+                "gh",
+                "repo",
+                "view",
+                "--json",
+                "owner,name,nameWithOwner,defaultBranchRef",
+                run(["git", "remote", "get-url", remote]),
+            ],
             json=True,
         )
 
         return cls(
             owner=json["owner"]["login"],
             name=json["name"],
+            name_with_owner=json["nameWithOwner"],
             default_branch=json["defaultBranchRef"]["name"],
             url=url,
             json=json,
         )
 
-    def create_pull_request(self, base_branch: str, head_branch: str, title: str):
-        """Open a new pull request."""
-
-        json = run(
-            [
-                "gh",
-                "api",
-                "--method",
-                "POST",
-                f"/repos/{self.owner}/{self.name}/pulls",
-                "-f",
-                f"base={base_branch}",
-                "-f",
-                f"head={head_branch}",
-                "-f",
-                f"title={title}",
-            ],
-            json=True,
-        )
-        return PullRequest.make(repo=self, json=json)
-
-    def pull_requests(self):
-        """Return the list of open pull requests on this GitHub repo."""
-        json = run(
-            ["gh", "api", "--paginate", f"/repos/{self.owner}/{self.name}/pulls"],
-            json=True,
-        )
-
-        return [
-            PullRequest.make(repo=self, json=pull_request_json)
-            for pull_request_json in json
-        ]
-
-    def pull_request(self, base_branch: str, head_branch: str):
-        """Return the open PR for base_branch and head_branch, or None."""
-        for pull_request in self.pull_requests():
-            if pull_request.base_label != f"{self.owner}:{base_branch}":
-                continue
-
-            if pull_request.head_label != f"{self.owner}:{head_branch}":
-                continue
-
-            return pull_request
-
-        return None
-
 
 @dataclass(frozen=True)
 class PullRequest:
-    """A GitHub pull request."""
-
-    repo: str
+    base_repo: GitHubRepo
+    head_repo: GitHubRepo
+    head_branch: str
     number: int
-    html_url: str = field(compare=False, repr=False)
-    base_label: str = field(compare=False, repr=False)
-    head_label: str = field(compare=False, repr=False)
+    url: str = field(compare=False, repr=False)
     json: Optional[dict] = field(compare=False, repr=False)
 
     @classmethod
-    def make(cls, repo: GitHubRepo, json: dict):
-        """Create a PullRequest from the given GitHub API JSON data."""
-        return PullRequest(
-            repo=repo,
-            html_url=json["html_url"],
-            number=json["number"],
-            base_label=json["base"]["label"],
-            head_label=json["head"]["label"],
-            json=json,
-        )
+    def get(cls, base_repo, head_repo, head_branch):
+        # We can't use `gh pr view` to get a PR from GitHub because the error
+        # that happens when there's no matching PR and we should return None
+        # isn't distinguishable from other errors that should cause us to crash
+        # (there are no machine-readable error codes).
+        #
+        # We can't use `gh pr list` to find a matching PR because it only
+        # returns the most recent 30 PRs.
+        #
+        # So we call the list pull requests API
+        # (https://docs.github.com/en/rest/pulls/pulls#list-pull-requests)
+        # with pagination. I think this should search all open PRs.
+        #
+        # For how to call the GitHub API through GitHub CLI see:
+        # https://cli.github.com/manual/gh_api
+        # (it handles authentication and pagination for us).
 
-    def close(self) -> None:
-        """Close this PullRequest."""
-        run(
+        matching_prs = run(
             [
                 "gh",
                 "api",
+                "--paginate",
                 "--method",
-                "PATCH",
-                f"/repos/{self.repo.owner}/{self.repo.name}/pulls/{self.number}",
+                "GET",
+                f"/repos/{base_repo.owner}/{base_repo.name}/pulls",
                 "-f",
-                "state=closed",
+                f"base={base_repo.default_branch}",
+                "-f",
+                f"head={head_repo.owner}:{head_branch}",
+                "-f",
+                "state=open",
+            ],
+            json=True,
+        )
+
+        if not matching_prs:
+            return None
+
+        assert len(matching_prs) == 1
+
+        json = matching_prs[0]
+
+        return PullRequest(
+            base_repo=base_repo,
+            head_repo=head_repo,
+            head_branch=head_branch,
+            number=json["number"],
+            url=json["url"],
+            json=json,
+        )
+
+    def close(self, comment) -> None:
+        run(
+            [
+                "gh",
+                "pr",
+                "close",
+                "--repo",
+                self.base_repo.name_with_owner,
+                "--delete-branch",
+                "--comment",
+                comment,
+                str(self.number),
             ]
         )
 
@@ -152,8 +157,8 @@ def branch_exists(remote: str, branch: str) -> bool:
     """Return True if `remote` has a branch named `branch`.
 
     This is based on the local git repo's record of `remote` (from the last
-    time it cloned or fetched from `remote`). False positives and negatives
-    are possible if this info is out of date.
+    time it was cloned from or fetched from `remote`). False positives and
+    negatives are possible if this local info is out of date.
     """
     try:
         run(["git", "show-ref", f"refs/remotes/{remote}/{branch}"])
@@ -163,16 +168,6 @@ def branch_exists(remote: str, branch: str) -> bool:
         raise
 
     return True
-
-
-def configured_email() -> str:
-    """Return the user's email address from `git config`."""
-    return run(["git", "config", "--get", "user.email"])
-
-
-def configured_username() -> str:
-    """Return the user's username from `git config`."""
-    return run(["git", "config", "--get", "user.name"])
 
 
 def current_branch() -> str:
@@ -185,41 +180,53 @@ def diff(branches: list[str]) -> str:
     return run(["git", "diff", *branches])
 
 
-def fetch_url(remote: str) -> str:
-    """Return the given `remote`'s fetch URL."""
-    return run(["git", "remote", "get-url", remote])
-
-
-def log(branches: list[str], options: Optional[list[str]] = None) -> list[Commit]:
+def log(branches: list[str]) -> list[Commit]:
     """Return the commits from `git log <branch>...` for the given `branches`."""
-    if options is None:
-        options = []
-
     return [
-        Commit.make(sha)
-        for sha in run(["git", "log", *options, *branches, "--format=%H"]).split()
+        Commit.get(sha) for sha in run(["git", "log", *branches, "--format=%H"]).split()
     ]
 
 
-def push(remote: str, branch: str) -> None:
-    """Push `branch` to `remote/branch`.
+def push(base_remote: str, head_remote: str, branch: str) -> None:
+    """Force-push <branch> to <head_remote>/<branch>.
 
-    If `remote/branch` doesn't exist it'll be created.
+    If <head_remote>/<branch> doesn't exist the branch will be created.
 
-    If `remote/branch` does exist it'll be updated by force-pushing.
+    If <head_remote>/<branch> already exists it'll be force-pushed.
+    WARNING: This may remove some or all of the commits from
+    <head_remote>/<branch>! To see which commits will be removed run:
 
-    This will remove any commits from `remote/branch` that don't exist on the
-    local `branch`. To see what commits will be removed run:
-    `git log remote/branch ^branch`.
+        log(f"{head_remote}/{branch}", f"^{branch}")
+
+    If <head_remote>/<branch> exists and contains commits that were not
+    authored by the configured git user (from `git config`) and are not on
+    base_remote's default branch then raise because we don't want to
+    potentially remove other user's commits.
     """
+    base_repo = GitHubRepo.get(base_remote)
+    head_repo = GitHubRepo.get(head_remote)
+
+    if branch_exists(head_remote, branch):
+        # The commits that are on the remote branch currently.
+        remote_commits = git.log(
+            ["f{head_remote}/{branch}", f"^{base_remote}/{base_repo.default_branch}"]
+        )
+
+        # The commits that *will* be on the remote branch if we force-push it.
+        local_commits = git.log(
+            ["f{branch}", f"^{base_remote}/{base_repo.default_branch}"]
+        )
+
+        # The commits that will be removed from the remote branch if we force-push it.
+        commits_that_would_be_removed = [
+            commit for commit in remote_commits if commit not in local_commits
+        ]
+
+        for commit in commits_that_would_be_removed:
+            if commit.author != User.get_configured_user():
+                raise RuntimeError("It's all wrong")
+
+    # If we get here then it's safe to force-push the branch:
+    # either the remote branch doesn't exist or it contains only commits
+    # authored by the configured git user.
     run(["git", "push", "--force-with-lease", remote, f"{branch}:{branch}"])
-
-
-def there_are_merge_commits(remote: str, base_branch: str, head_branch: str) -> bool:
-    """Return True if head_branch or remote_branch has merge commits that aren't on remote/base_branch."""
-    branches = [head_branch, f"^{remote}/{base_branch}"]
-
-    if branch_exists(remote, head_branch):
-        branches.append(f"{remote}/{head_branch}")
-
-    return bool(log(branches, options=["--merges"]))

@@ -6,7 +6,7 @@ class PRUpsertError(Exception):
 
 
 class OnDefaultBranchError(PRUpsertError):
-    message = "You must change to a branch before creating a PR"
+    message = "You must change to a different branch before creating a PR"
     exit_status = 2
 
 
@@ -20,49 +20,61 @@ class OtherPeopleError(PRUpsertError):
     exit_status = 4
 
 
-def push(remote, head_branch, base_branch):
-    if git.branch_exists(remote, head_branch):
-        local_commits = git.log([f"^{remote}/{base_branch}", head_branch])
-        remote_commits = git.log(
-            [f"^{remote}/{base_branch}", f"{remote}/{head_branch}"]
-        )
+@cache
+def safe_to_modify_pr(base_remote, base_branch, head_remote, head_branch) -> bool:
+    """Return True if no one else has contributed to the PR."""
 
-        if local_commits == remote_commits:
-            return
+    if not git.branch_exists(head_remote, head_branch):
+        return True
 
-        commits_to_delete = [
-            commit for commit in remote_commits if commit not in local_commits
-        ]
+    # The commits that *will* be in the PR if we force-push it.
+    local_commits = git.log(["f{head_branch}", f"^{base_remote}/{base_branch}"])
 
-        for commit in commits_to_delete:
-            if not (
-                commit.author_name == git.configured_username()
-                and commit.author_email == git.configured_email()
-            ):
-                raise OtherPeopleError()
+    # The commits that are in the PR currently.
+    remote_commits = git.log(
+        ["f{head_remote}/{head_branch}", f"^{base_remote}/{base_branch}"]
+    )
 
-    git.push(remote, head_branch)
+    if local_commits == remote_commits:
+        return True
+
+    # The commits that will be removed from the PR if we force-push it.
+    commits_that_would_be_removed = [
+        commit for commit in remote_commits if commit not in local_commits
+    ]
+
+    for commit in commits_that_would_be_removed:
+        if not (
+            commit.author_name == git.configured_username()
+            and commit.author_email == git.configured_email()
+        ):
+            return False
+
+    return True
 
 
-def pr_upsert(remote, base_branch, head_branch, title):
-    github = git.GitHubRepo.make(git.fetch_url(remote))
+def pr_upsert(base_remote, base_branch, head_remote, title, body):
+    base_repo = git.GitHubRepo.make(git.fetch_url(base_remote))
+    head_repo = git.GitHubRepo.make(git.fetch_url(head_remote))
 
-    if head_branch == github.default_branch:
-        raise OnDefaultBranchError()
+    if base_repo == head_repo and git.current_branch() == base_branch:
+        raise SameBranchError()
 
-    if git.there_are_merge_commits(remote, base_branch, head_branch):
-        raise NotImplementedError("gh-pr-upsert doesn't work when merge commits are present")
+    if not git.diff([git.current_branch(), f"^{base_remote}/{base_branch}"]):
+        existing_pr = git.existing_pr(base_remote, base_branch, head_branch)
+        if existing_pr and safe_to_modify_pr():
+            existing_pr.close()
 
-    if not git.diff([head_branch, f"^{remote}/{base_branch}"]):
-        if pull_request := existing_pr(remote, base_branch, head_branch):
-            pull_request.close()
         raise NoChangesError()
 
-    push(remote, head_branch, base_branch)
+    if safe_to_modify_pr():
+        git.push(base_remote, git.current_branch(), base_branch)
 
-    pr = github.pull_request(base_branch, head_branch)
+    pr = base_repo.get_pull_request(base_branch, head_repo, head_branch)
 
     if not pr:
-        pr = github.create_pull_request(base_branch, head_branch, title)
+        pr = github.create_pull_request(
+            base_branch, head_repo, head_branch, title, body
+        )
 
     print(pr.html_url)
