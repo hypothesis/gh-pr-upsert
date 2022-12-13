@@ -14,7 +14,7 @@ def pr_upsert(base_remote, head_remote, title, body, close_comment):
         raise SameBranchError()
 
     # The list of users who have commits on the remote branch.
-    contributors = {
+    other_contributors = {
         commit.author
         for commit in git.log(
             (
@@ -23,10 +23,11 @@ def pr_upsert(base_remote, head_remote, title, body, close_comment):
                 f"^{base_remote}/{base_branch}",
             )
         )
+        if commit.author != git.configured_user()
     }
 
-    # It's safe to modify the remote branch if only the current user has commits on it.
-    safe_to_modify = contributors == {git.configured_user()}
+    # It's safe to modify the remote branch if no other users have commits on it.
+    safe_to_modify = other_contributors == set()
 
     # The changes that we have locally.
     local_diff = git.diff([head_branch, f"^{base_remote}/{base_branch}"])
@@ -37,6 +38,7 @@ def pr_upsert(base_remote, head_remote, title, body, close_comment):
     # If there are no local changes then close any existing PR.
     if not local_diff:
         if pull_request and safe_to_modify:
+            print(f"Closed PR {pull_request.html_url}")
             pull_request.close(close_comment)
 
         raise NoChangesError()
@@ -62,4 +64,4 @@ def pr_upsert(base_remote, head_remote, title, body, close_comment):
             base_repo, head_repo, head_branch, title, body
         )
 
-    print(pull_request.url)
+    print(pull_request.html_url)

@@ -46,6 +46,8 @@ class GitHubRepo:
 
     @classmethod
     def get(cls, remote: str):
+        remote_url = run(["git", "remote", "get-url", remote])
+
         json = run(
             [
                 "gh",
@@ -53,7 +55,7 @@ class GitHubRepo:
                 "view",
                 "--json",
                 "owner,name,nameWithOwner,defaultBranchRef,url",
-                run(["git", "remote", "get-url", remote]),
+                remote_url,
             ],
             json=True,
         )
@@ -74,7 +76,7 @@ class PullRequest:
     head_repo: GitHubRepo
     head_branch: str
     number: int
-    url: str = field(compare=False, repr=False)
+    html_url: str = field(compare=False, repr=False)
     json: Optional[dict] = field(compare=False, repr=False)
 
     @classmethod
@@ -85,7 +87,7 @@ class PullRequest:
             head_repo=head_repo,
             head_branch=head_branch,
             number=json["number"],
-            url=json["url"],
+            html_url=json["html_url"],
             json=json,
         )
 
@@ -97,6 +99,8 @@ class PullRequest:
             [
                 "gh",
                 "api",
+                "--header",
+                "X-GitHub-Api-Version:2022-11-28",
                 "--method",
                 "POST",
                 f"/repos/{base_repo.owner}/{base_repo.name}/pulls",
@@ -120,6 +124,8 @@ class PullRequest:
             [
                 "gh",
                 "api",
+                "--header",
+                "X-GitHub-Api-Version:2022-11-28",
                 "--paginate",
                 "--method",
                 "GET",

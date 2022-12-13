@@ -16,5 +16,5 @@ class NoChangesError(PRUpsertError):
 
 
 class OtherPeopleError(PRUpsertError):
-    message = "Other people have pushed commits to the PR, not updating it"
+    message = "Other people have pushed commits to the branch, not updating it"
     exit_status = 4
