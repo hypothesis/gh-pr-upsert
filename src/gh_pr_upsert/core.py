@@ -1,35 +1,29 @@
 from gh_pr_upsert import git
-from gh_pr_upsert.exceptions import SameBranchError
+from gh_pr_upsert.exceptions import NoChangesError, OtherPeopleError, SameBranchError
+from gh_pr_upsert.git import GitHubRepo, PullRequest
 
 
-def pr_upsert(base_remote, base_branch, head_remote, title, body, close_comment):
-    # The repo where we'll open the PR.
-    base_repo = git.GitHubRepo.get(base_remote)
-
-    # The branch that the PR will request to be merged into.
+def pr_upsert(base_remote, head_remote, title, body, close_comment):
+    base_repo = GitHubRepo.get(base_remote)
     base_branch = base_repo.default_branch
-
-    # The repo that we'll push the branch containing our commits to.
-    head_repo = git.GitHubRepo.get(head_remote)
-
-    # The branch that contains the commits we want to push.
+    head_repo = GitHubRepo.get(head_remote)
     head_branch = git.current_branch()
 
-    # You can't send a PR to merge one branch into itself.
+    # You can't send a PR to merge a branch into itself.
     if base_repo == head_repo and base_branch == head_branch:
         raise SameBranchError()
 
     # The list of users who have commits on the remote branch.
-    contributors = set(
-        [
-            commit.author
-            for commit in git.log(
+    contributors = {
+        commit.author
+        for commit in git.log(
+            (
                 f"{head_remote}/{head_branch}",
                 f"^{head_branch}",
                 f"^{base_remote}/{base_branch}",
             )
-        ]
-    )
+        )
+    }
 
     # It's safe to modify the remote branch if only the current user has commits on it.
     safe_to_modify = contributors == {git.configured_user()}
@@ -38,12 +32,12 @@ def pr_upsert(base_remote, base_branch, head_remote, title, body, close_comment)
     local_diff = git.diff([head_branch, f"^{base_remote}/{base_branch}"])
 
     # The existing PR or None.
-    pr = PullRequest.get(base_repo, head_repo, head_branch)
+    pull_request = PullRequest.get(base_repo, head_repo, head_branch)
 
     # If there are no local changes then close any existing PR.
     if not local_diff:
-        if pr and safe_to_modify:
-            pr.close(close_comment)
+        if pull_request and safe_to_modify:
+            pull_request.close(close_comment)
 
         raise NoChangesError()
 
@@ -63,7 +57,9 @@ def pr_upsert(base_remote, base_branch, head_remote, title, body, close_comment)
         git.push(head_remote, head_branch)
 
     # Create a PR if there isn't one already.
-    if not pr:
-        pr = github.PullRequest.create()
+    if not pull_request:
+        pull_request = PullRequest.create(
+            base_repo, head_repo, head_branch, title, body
+        )
 
-    print(pr.url)
+    print(pull_request.url)

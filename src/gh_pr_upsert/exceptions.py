@@ -1,8 +1,11 @@
 class PRUpsertError(Exception):
     """Base class for all exceptions deliberately raised by gh_pr_upsert."""
 
+    message = ""
+    exit_status = 1
 
-class OnDefaultBranchError(PRUpsertError):
+
+class SameBranchError(PRUpsertError):
     message = "You must change to a different branch before creating a PR"
     exit_status = 2
 

@@ -1,10 +1,8 @@
 """Helpers for working with Git and GitHub."""
 from dataclasses import dataclass, field
-from functools import cache
 from subprocess import CalledProcessError
 from typing import Optional
 
-from gh_pr_upsert.exceptions import OtherPeopleError
 from gh_pr_upsert.run import run
 
 
@@ -80,23 +78,44 @@ class PullRequest:
     json: Optional[dict] = field(compare=False, repr=False)
 
     @classmethod
-    def get(cls, base_repo, head_repo, head_branch):
-        # We can't use `gh pr view` to get a PR from GitHub because the error
-        # that happens when there's no matching PR and we should return None
-        # isn't distinguishable from other errors that should cause us to crash
-        # (there are no machine-readable error codes).
-        #
-        # We can't use `gh pr list` to find a matching PR because it only
-        # returns the most recent 30 PRs.
-        #
-        # So we call the list pull requests API
-        # (https://docs.github.com/en/rest/pulls/pulls#list-pull-requests)
-        # with pagination. I think this should search all open PRs.
-        #
-        # For how to call the GitHub API through GitHub CLI see:
-        # https://cli.github.com/manual/gh_api
-        # (it handles authentication and pagination for us).
+    def from_json(cls, base_repo, head_repo, head_branch, json):
+        """Return a PullRequest from the given GitHub API JSON data."""
+        return cls(
+            base_repo=base_repo,
+            head_repo=head_repo,
+            head_branch=head_branch,
+            number=json["number"],
+            url=json["url"],
+            json=json,
+        )
 
+    @classmethod
+    def create(
+        cls, base_repo, head_repo, head_branch, title, body
+    ):  # pylint: disable=too-many-arguments
+        json = run(
+            [
+                "gh",
+                "api",
+                "--method",
+                "POST",
+                f"/repos/{base_repo.owner}/{base_repo.name}/pulls",
+                "-f",
+                f"base={base_repo.default_branch}",
+                "-f",
+                f"head={head_repo.owner}:{head_branch}",
+                "-f",
+                f"title={title}",
+                "-f",
+                f"body={body}",
+            ],
+            json=True,
+        )
+
+        return cls.from_json(base_repo, head_repo, head_branch, json)
+
+    @classmethod
+    def get(cls, base_repo, head_repo, head_branch):
         matching_prs = run(
             [
                 "gh",
@@ -122,14 +141,7 @@ class PullRequest:
 
         json = matching_prs[0]
 
-        return PullRequest(
-            base_repo=base_repo,
-            head_repo=head_repo,
-            head_branch=head_branch,
-            number=json["number"],
-            url=json["url"],
-            json=json,
-        )
+        return cls.from_json(base_repo, head_repo, head_branch, json)
 
     def close(self, comment) -> None:
         run(
@@ -169,7 +181,7 @@ def configured_user():
 
 def contributors(branches: list[str]) -> list[User]:
     """Return the list of users who've contributed to the given branches."""
-    return set([commit.author for commit in log(branches)])
+    return {commit.author for commit in log(branches)}
 
 
 def current_branch() -> str:
