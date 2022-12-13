@@ -60,7 +60,7 @@ class GitHubRepo:
                 "repo",
                 "view",
                 "--json",
-                "owner,name,nameWithOwner,defaultBranchRef",
+                "owner,name,nameWithOwner,defaultBranchRef,url",
                 run(["git", "remote", "get-url", remote]),
             ],
             json=True,
@@ -71,7 +71,7 @@ class GitHubRepo:
             name=json["name"],
             name_with_owner=json["nameWithOwner"],
             default_branch=json["defaultBranchRef"]["name"],
-            url=url,
+            url=json["url"],
             json=json,
         )
 
@@ -208,14 +208,12 @@ def push(base_remote: str, head_remote: str, branch: str) -> None:
 
     if branch_exists(head_remote, branch):
         # The commits that are on the remote branch currently.
-        remote_commits = git.log(
-            ["f{head_remote}/{branch}", f"^{base_remote}/{base_repo.default_branch}"]
+        remote_commits = log(
+            [f"{head_remote}/{branch}", f"^{base_remote}/{base_repo.default_branch}"]
         )
 
         # The commits that *will* be on the remote branch if we force-push it.
-        local_commits = git.log(
-            ["f{branch}", f"^{base_remote}/{base_repo.default_branch}"]
-        )
+        local_commits = log([branch, f"^{base_remote}/{base_repo.default_branch}"])
 
         # The commits that will be removed from the remote branch if we force-push it.
         commits_that_would_be_removed = [
@@ -229,4 +227,4 @@ def push(base_remote: str, head_remote: str, branch: str) -> None:
     # If we get here then it's safe to force-push the branch:
     # either the remote branch doesn't exist or it contains only commits
     # authored by the configured git user.
-    run(["git", "push", "--force-with-lease", remote, f"{branch}:{branch}"])
+    run(["git", "push", "--force-with-lease", head_remote, f"{branch}:{branch}"])
