@@ -191,9 +191,13 @@ class TestPRUpsert:
     @pytest.fixture(autouse=True)
     def git(self, mocker, base_repo, head_repo, user, commit_factory):
         git = mocker.patch("gh_pr_upsert.core.git", autospec=True)
+
         git.GitHubRepo.get.side_effect = [base_repo, head_repo]
+
+        # Make `git log` return two commits both by the configured user.
         git.configured_user.return_value = user
         git.log.return_value = commit_factory.create_batch(
             2, author=git.configured_user.return_value
         )
+
         return git
