@@ -48,13 +48,10 @@ def cli(_argv=None):
         print(version("gh-pr-upsert"))
         sys.exit()
 
-    if args.body_file is not None:
+    if args.body_file is not None:  # pragma: no cover
         # --body-file overrides --body if both are given at once.
         with open(args.body_file, "r", encoding="utf-8") as body_file:
             args.body = body_file.read()
-
-    if args.body is None:
-        args.body = "Automated changes by [gh-pr-upsert](https://github.com/hypothesis/gh-pr-upsert)."
 
     try:
         core.pr_upsert(args.base, args.head, args.title, args.body, args.close_comment)

@@ -1,253 +1,323 @@
 from subprocess import CalledProcessError
-from unittest.mock import sentinel
+from unittest.mock import call, sentinel
 
 import pytest
 
-from gh_pr_upsert import git
+from gh_pr_upsert.git import (
+    Commit,
+    GitHubRepo,
+    PullRequest,
+    User,
+    branch_exists,
+    configured_user,
+    contributors,
+    current_branch,
+    diff,
+    log,
+    push,
+)
 
 
-class TestAuthenticatedUsername:
-    def test_it(self, run):
-        run.return_value = {"login": sentinel.username}
+class TestCommit:
+    def test_get(self, run):
+        run.side_effect = [
+            sentinel.full_sha,
+            sentinel.author_name,
+            sentinel.author_email,
+        ]
 
-        username = git.authenticated_username()
+        commit = Commit.get(sentinel.sha)
 
-        run.assert_called_once_with(["gh", "api", "/user"], json=True)
-        assert username == sentinel.username
-
-
-class TestPRDiff:
-    def test_it(self, run):
-        diff = git.pr_diff()
-
-        run.assert_called_once_with(["gh", "pr", "diff"])
-        assert diff == run.return_value
-
-
-class TestPR:
-    def test_it_returns_the_open_pr(self, run):
-        run.return_value = {"state": "OPEN"}
-
-        pr = git.pr()
-
-        run.assert_called_once_with(
-            ["gh", "pr", "view", "--json", "state,commits"], json=True
+        assert run.call_args_list == [
+            call(["git", "show", "--no-patch", "--format=%H", sentinel.sha]),
+            call(["git", "show", "--no-patch", "--format=%an", sentinel.sha]),
+            call(["git", "show", "--no-patch", "--format=%ae", sentinel.sha]),
+        ]
+        assert commit == Commit(
+            sha=sentinel.full_sha,
+            author=User(name=sentinel.author_name, email=sentinel.author_email),
         )
-        assert pr == run.return_value
-
-    def test_it_returns_None_if_theres_no_open_pr(self, run):
-        run.return_value = {"state": "CLOSED"}
-
-        assert git.pr() is None
-
-    def test_it_returns_None_if_the_command_fails(self, run):
-        run.side_effect = CalledProcessError(
-            returncode=sentinel.returncode, cmd=sentinel.cmd
-        )
-
-        assert git.pr() is None
-
-    @pytest.fixture(autouse=True)
-    def cache_clear(self):
-        git.pr.cache_clear()
 
 
 class TestGitHubRepo:
-    def test_it(self, run):
-        repo = git.github_repo()
+    def test_get(self, run):
+        # The JSON returned by `gh repo view`.
+        json = {
+            "name": sentinel.repo_name,
+            "nameWithOwner": sentinel.repo_name_with_owner,
+            "url": sentinel.repo_url,
+            "owner": {"login": sentinel.owner_login},
+            "defaultBranchRef": {"name": sentinel.default_branch_name},
+        }
+        run.side_effect = [sentinel.remote_url, json]
+
+        repo = GitHubRepo.get(sentinel.remote)
+
+        assert run.call_args_list == [
+            call(["git", "remote", "get-url", sentinel.remote]),
+            call(
+                [
+                    "gh",
+                    "repo",
+                    "view",
+                    "--json",
+                    "owner,name,nameWithOwner,defaultBranchRef,url",
+                    sentinel.remote_url,
+                ],
+                json=True,
+            ),
+        ]
+        assert repo == GitHubRepo(
+            owner=sentinel.owner_login,
+            name=sentinel.repo_name,
+            name_with_owner=sentinel.repo_name_with_owner,
+            default_branch=sentinel.default_branch_name,
+            url=sentinel.repo_url,
+            json=json,
+        )
+
+
+class TestPullRequest:
+    def test_from_json(self, json):
+        pull_request = PullRequest.from_json(
+            sentinel.base_repo, sentinel.head_repo, sentinel.head_branch, json
+        )
+
+        assert pull_request == PullRequest(
+            base_repo=sentinel.base_repo,
+            head_repo=sentinel.head_repo,
+            head_branch=sentinel.head_branch,
+            number=sentinel.number,
+            html_url=sentinel.html_url,
+            json=json,
+        )
+
+    def test_create(self, base_repo, head_repo, run, json):
+        run.return_value = json
+
+        pull_request = PullRequest.create(
+            base_repo, head_repo, sentinel.head_branch, sentinel.title, sentinel.body
+        )
 
         run.assert_called_once_with(
-            ["gh", "repo", "view", "--json", "url,sshUrl,defaultBranchRef"], json=True
+            [
+                "gh",
+                "api",
+                "--header",
+                "X-GitHub-Api-Version:2022-11-28",
+                "--method",
+                "POST",
+                f"/repos/{base_repo.owner}/{base_repo.name}/pulls",
+                "-f",
+                f"base={base_repo.default_branch}",
+                "-f",
+                f"head={head_repo.owner}:{sentinel.head_branch}",
+                "-f",
+                f"title={sentinel.title}",
+                "-f",
+                f"body={sentinel.body}",
+            ],
+            json=True,
         )
-        assert repo == run.return_value
+        assert pull_request == PullRequest(
+            base_repo=base_repo,
+            head_repo=head_repo,
+            head_branch=sentinel.head_branch,
+            number=sentinel.number,
+            html_url=sentinel.html_url,
+            json=json,
+        )
 
-    @pytest.fixture(autouse=True)
-    def cache_clear(self):
-        git.github_repo.cache_clear()
+    def test_get(self, base_repo, head_repo, run, json):
+        run.return_value = [json]
 
-
-class TestDefaultBranch:
-    def test_it(self, run):
-        run.return_value = {"defaultBranchRef": {"name": sentinel.default_branch_name}}
-
-        branch_name = git.default_branch()
+        pull_request = PullRequest.get(base_repo, head_repo, sentinel.head_branch)
 
         run.assert_called_once_with(
-            ["gh", "repo", "view", "--json", "url,sshUrl,defaultBranchRef"], json=True
+            [
+                "gh",
+                "api",
+                "--header",
+                "X-GitHub-Api-Version:2022-11-28",
+                "--paginate",
+                "--method",
+                "GET",
+                f"/repos/{base_repo.owner}/{base_repo.name}/pulls",
+                "-f",
+                f"base={base_repo.default_branch}",
+                "-f",
+                f"head={head_repo.owner}:{sentinel.head_branch}",
+                "-f",
+                "state=open",
+            ],
+            json=True,
         )
-        assert branch_name == sentinel.default_branch_name
+        assert pull_request == PullRequest(
+            base_repo=base_repo,
+            head_repo=head_repo,
+            head_branch=sentinel.head_branch,
+            number=sentinel.number,
+            html_url=sentinel.html_url,
+            json=json,
+        )
 
-    @pytest.fixture(autouse=True)
-    def cache_clear(self):
-        git.github_repo.cache_clear()
+    def test_get_returns_None_if_there_are_no_matching_prs(
+        self, base_repo, head_repo, run
+    ):
+        run.return_value = None
 
+        assert not PullRequest.get(base_repo, head_repo, sentinel.head_branch)
 
-class TestPushURLs:
-    def test_it(self, run):
-        run.return_value = {"url": "test_url", "sshUrl": "test_ssh_url"}
+    def test_get_raises_if_there_are_multiple_matching_prs(
+        self, base_repo, head_repo, pull_request_factory, run
+    ):
+        # Make the GitHub API return two PRs for the same base repo, head repo
+        # and head branch. This should never happen in production: there can't
+        # be two open PRs for the same base and head branch, so get() raises
+        # AssertionError.
+        run.return_value = [
+            {"number": pr.number, "html_url": pr.html_url}
+            for pr in pull_request_factory.create_batch(
+                2,
+                base_repo=base_repo,
+                head_repo=head_repo,
+                head_branch=sentinel.head_branch,
+            )
+        ]
 
-        urls = git.push_urls()
+        with pytest.raises(AssertionError):
+            PullRequest.get(base_repo, head_repo, sentinel.head_branch)
+
+    def test_close(self, pull_request, run):
+        pull_request.close(sentinel.comment)
 
         run.assert_called_once_with(
-            ["gh", "repo", "view", "--json", "url,sshUrl,defaultBranchRef"], json=True
+            [
+                "gh",
+                "pr",
+                "close",
+                "--repo",
+                pull_request.base_repo.name_with_owner,
+                "--delete-branch",
+                "--comment",
+                sentinel.comment,
+                str(pull_request.number),
+            ]
         )
-        assert urls == ["test_url.git", "test_ssh_url"]
+
+    @pytest.fixture
+    def json(self):
+        """Return a JSON representation of a pull request as from the GitHub API."""
+        return {"number": sentinel.number, "html_url": sentinel.html_url}
+
+
+class TestBranchExists:
+    def test_it_returns_True_if_the_branch_exists(self, run):
+        exists = branch_exists("origin", "my-branch")
+
+        run.assert_called_once_with(
+            ["git", "show-ref", "refs/remotes/origin/my-branch"]
+        )
+        assert exists
+
+    def test_it_returns_False_if_the_branch_doesnt_exist(self, run):
+        run.side_effect = CalledProcessError(returncode=1, cmd=sentinel.cmd)
+
+        assert not branch_exists("origin", "my-branch")
+
+    def test_it_raises_if_it_gets_an_unexpected_exit_code_from_git(self, run):
+        run.side_effect = CalledProcessError(returncode=2, cmd=sentinel.cmd)
+
+        with pytest.raises(CalledProcessError) as exc_info:
+            branch_exists("origin", "my-branch")
+
+        assert exc_info.value == run.side_effect
+
+
+class TestConfiguredUser:
+    def test_it(self, user, run):
+        run.side_effect = [user.name, user.email]
+
+        assert configured_user() == user
+        assert run.call_args_list == [
+            call(["git", "config", "--get", "user.name"]),
+            call(["git", "config", "--get", "user.email"]),
+        ]
+
+
+class TestContributors:
+    def test_it(self, log, commit_factory):
+        branches = [sentinel.branch_1, sentinel.branch_2]
+        log.return_value = commits = commit_factory.create_batch(2)
+
+        returned = contributors(branches)
+
+        log.assert_called_once_with(branches)
+        assert returned == {commits[0].author, commits[1].author}
 
     @pytest.fixture(autouse=True)
-    def cache_clear(self):
-        git.github_repo.cache_clear()
+    def log(self, mocker):
+        return mocker.patch("gh_pr_upsert.git.log", autospec=True)
 
 
 class TestCurrentBranch:
     def test_it(self, run):
-        current_branch = git.current_branch()
+        branch = current_branch()
 
         run.assert_called_once_with(
             ["git", "symbolic-ref", "--quiet", "--short", "HEAD"]
         )
-        assert current_branch == run.return_value
-
-    @pytest.fixture(autouse=True)
-    def cache_clear(self):
-        git.current_branch.cache_clear()
+        assert branch == run.return_value
 
 
-class TestCommittedChanges:
+class TestDiff:
     def test_it(self, run):
-        diff = git.committed_changes()
-
-        run.assert_called_once_with(["git", "diff", "origin/main..."])
-        assert diff == run.return_value
-
-    @pytest.fixture(autouse=True)
-    def remote(self, mocker):
-        return mocker.patch(
-            "gh_pr_upsert.git.remote", autospec=True, return_value="origin"
-        )
-
-    @pytest.fixture(autouse=True)
-    def default_branch(self, mocker):
-        return mocker.patch(
-            "gh_pr_upsert.git.default_branch", autospec=True, return_value="main"
-        )
-
-
-class TestPRCommitters:
-    def test_it(self, run):
-        run.return_value = {
-            "state": "OPEN",
-            "commits": [
-                {"authors": [{"login": "author_1"}]},
-                # Commits can have multiple authors.
-                {"authors": [{"login": "author_2"}, {"login": "author_3"}]},
-                # Duplicates should be removed.
-                {"authors": [{"login": "author_1"}]},
-            ],
-        }
-
-        committers = git.pr_committers()
+        returned = diff([sentinel.branch_1, sentinel.branch_2])
 
         run.assert_called_once_with(
-            ["gh", "pr", "view", "--json", "state,commits"], json=True
+            ["git", "diff", sentinel.branch_1, sentinel.branch_2]
         )
-        assert committers == {"author_1", "author_2", "author_3"}
-
-    @pytest.fixture(autouse=True)
-    def cache_clear(self):
-        git.pr.cache_clear()
+        assert returned == run.return_value
 
 
-class TestRemotes:
-    def test_it(self, run):
-        run.return_value = "origin\nupstream"
+class TestLog:
+    def test_it(self, commit_factory, run, get):
+        get.side_effect = commits = commit_factory.create_batch(2)
+        run.return_value = "\n".join((commit.sha for commit in commits))
 
-        remotes = git.remotes()
-
-        run.assert_called_once_with(["git", "remote"])
-        assert remotes == ["origin", "upstream"]
-
-
-class TestPushURL:
-    def test_it(self, run):
-        url = git.push_url(sentinel.remote)
+        returned = log([sentinel.branch_1, sentinel.branch_2])
 
         run.assert_called_once_with(
-            ["git", "remote", "get-url", "--push", sentinel.remote]
+            [
+                "git",
+                "log",
+                "--ignore-missing",
+                sentinel.branch_1,
+                sentinel.branch_2,
+                "--format=%H",
+            ]
         )
-        assert url == run.return_value
-
-
-class TestRemote:
-    def test_it(self):
-        assert git.remote() == "remote_1"
-
-    def test_it_raises_ValueError_if_no_remotes_match(self, remotes):
-        remotes.return_value = ["non_matching_remote_1", "non_matching_remote_2"]
-
-        with pytest.raises(ValueError):
-            git.remote()
+        assert get.call_args_list == [call(commits[0].sha), call(commits[1].sha)]
+        assert returned == commits
 
     @pytest.fixture(autouse=True)
-    def remotes(self, mocker):
-        return mocker.patch(
-            "gh_pr_upsert.git.remotes",
-            autospec=True,
-            return_value=["remote_1", "remote_2"],
-        )
-
-    @pytest.fixture(autouse=True)
-    def push_url(self, mocker):
-        return mocker.patch(
-            "gh_pr_upsert.git.push_url",
-            autospec=True,
-            side_effect=lambda remote: f"push_url for: {remote}",
-        )
-
-    @pytest.fixture(autouse=True)
-    def push_urls(self, mocker):
-        return mocker.patch(
-            "gh_pr_upsert.git.push_urls",
-            autospec=True,
-            return_value=["some_other_push_url", "push_url for: remote_1"],
-        )
+    def get(self, mocker):
+        return mocker.patch("gh_pr_upsert.git.Commit.get", autospec=True)
 
 
 class TestPush:
-    @pytest.mark.parametrize(
-        "force,expected_command",
-        [
-            (
-                True,
-                ["git", "push", "--force", sentinel.remote, sentinel.current_branch],
-            ),
-            (False, ["git", "push", sentinel.remote, sentinel.current_branch]),
-        ],
-    )
-    def test_it(self, force, expected_command, run):
-        git.push(force=force)
-
-        run.assert_called_once_with(expected_command)
-
-    @pytest.fixture(autouse=True)
-    def remote(self, mocker):
-        return mocker.patch(
-            "gh_pr_upsert.git.remote", autospec=True, return_value=sentinel.remote
-        )
-
-    @pytest.fixture(autouse=True)
-    def current_branch(self, mocker):
-        return mocker.patch(
-            "gh_pr_upsert.git.current_branch",
-            autospec=True,
-            return_value=sentinel.current_branch,
-        )
-
-
-class TestCreatePR:
     def test_it(self, run):
-        git.create_pr()
+        push(sentinel.remote, sentinel.branch)
 
-        run.assert_called_once_with(["gh", "pr", "create", "--fill"])
+        run.assert_called_once_with(
+            [
+                "git",
+                "push",
+                "--force-with-lease",
+                sentinel.remote,
+                f"{sentinel.branch}:{sentinel.branch}",
+            ]
+        )
 
 
 @pytest.fixture(autouse=True)

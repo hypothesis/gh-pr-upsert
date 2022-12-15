@@ -1,6 +1,6 @@
 <a href="https://github.com/hypothesis/gh-pr-upsert/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://img.shields.io/github/workflow/status/hypothesis/gh-pr-upsert/CI/main"></a>
 <a href="https://pypi.org/project/gh-pr-upsert"><img src="https://img.shields.io/pypi/v/gh-pr-upsert"></a>
-<a><img src="https://img.shields.io/badge/python-3.10 | 3.9 | 3.8-success"></a>
+<a><img src="https://img.shields.io/badge/python-3.10 | 3.9-success"></a>
 <a href="https://github.com/hypothesis/gh-pr-upsert/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-BSD--2--Clause-success"></a>
 <a href="https://github.com/hypothesis/cookiecutters/tree/main/pypackage"><img src="https://img.shields.io/badge/cookiecutter-pypackage-success"></a>
 <a href="https://black.readthedocs.io/en/stable/"><img src="https://img.shields.io/badge/code%20style-black-000000"></a>
@@ -8,6 +8,7 @@
 # gh-pr-upsert
 
 A GitHub CLI extension to upsert pull requests.
+
 The `gh pr-upsert` command will create a new pull request (PR) with the commits
 on your current branch, generating a PR title and body from your commit
 messages:

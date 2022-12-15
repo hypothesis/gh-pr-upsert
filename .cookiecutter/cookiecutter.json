@@ -8,7 +8,7 @@
     "package_name": "gh_pr_upsert",
     "slug": "gh-pr-upsert",
     "short_description": "A GitHub CLI extension to upsert pull requests.",
-    "python_versions": "3.10.6, 3.9.13, 3.8.13",
+    "python_versions": "3.10.6, 3.9.13",
     "github_owner": "hypothesis",
     "copyright_holder": "Hypothesis",
     "visibility": "public",

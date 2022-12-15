@@ -39,7 +39,7 @@ class Commit:
 class GitHubRepo:
     owner: str
     name: str
-    name_with_owner: str
+    name_with_owner: str = field(repr=False, compare=False)
     default_branch: str = field(repr=False, compare=False)
     url: str = field(repr=False, compare=False)
     json: Optional[dict] = field(repr=False, compare=False)

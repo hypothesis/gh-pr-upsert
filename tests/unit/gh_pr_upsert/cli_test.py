@@ -1,78 +1,89 @@
 from importlib.metadata import version
 from subprocess import CalledProcessError
+from unittest.mock import sentinel
 
 import pytest
 
-from gh_pr_upsert.cli import PRUpsertError, cli
+from gh_pr_upsert.cli import cli
+from gh_pr_upsert.exceptions import NoChangesError
 
 
-def test_cli(core):
-    """Test the happy path.
-
-    Test when gh-pr-upsert is run with no command line arguments and
-    pr_upsert() exits successfully.
-    """
-    cli([])
-
-    core.pr_upsert.assert_called_once_with()
-
-
-def test_cli_help(core):
-    """Test gh-pr-upsert --help."""
+def test_help():
     with pytest.raises(SystemExit) as exc_info:
         cli(["--help"])
 
     assert not exc_info.value.code
-    core.pr_upsert.assert_not_called()
 
 
-def test_cli_version(core, capsys):
-    """Test gh-pr-upsert --version."""
+def test_version(capsys):
     with pytest.raises(SystemExit) as exc_info:
         cli(["--version"])
 
-    assert not exc_info.value.code
     assert capsys.readouterr().out.strip() == version("gh-pr-upsert")
-    core.pr_upsert.assert_not_called()
+    assert not exc_info.value.code
 
 
-def test_cli_expected_exception(core, capsys):
-    core.pr_upsert.side_effect = PRUpsertError()
-    core.pr_upsert.side_effect.message = "test_error_message"
-    core.pr_upsert.side_effect.exit_status = 42
+def test_defaults(core):
+    cli([])
+
+    core.pr_upsert.assert_called_once_with(
+        "origin",
+        "origin",
+        "Automated changes by gh-pr-upsert",
+        "Automated changes by [gh-pr-upsert](https://github.com/hypothesis/gh-pr-upsert).",
+        "It looks like this PR isn't needed anymore, closing it.",
+    )
+
+
+def test_options(core):
+    cli(
+        [
+            "--base",
+            "my_base_remote",
+            "--head",
+            "my_head_remote",
+            "--title",
+            "my_title",
+            "--body",
+            "my_body",
+            "--close-comment",
+            "my_close_comment",
+        ]
+    )
+
+    core.pr_upsert.assert_called_once_with(
+        "my_base_remote", "my_head_remote", "my_title", "my_body", "my_close_comment"
+    )
+
+
+def test_PRUpsertError(capsys, core):
+    core.pr_upsert.side_effect = NoChangesError()
 
     with pytest.raises(SystemExit) as exc_info:
         cli([])
 
-    core.pr_upsert.assert_called_once_with()
-    assert exc_info.value.code == 42
-    assert capsys.readouterr().out.strip() == "test_error_message"
+    assert capsys.readouterr().out.strip() == NoChangesError.message
+    assert exc_info.value.code == NoChangesError.exit_status
 
 
-def test_cli_unexpected_exception(core, capsys):
-    core.pr_upsert.side_effect = CalledProcessError(42, "test_command")
-    core.pr_upsert.side_effect.stdout = b"output"
-    core.pr_upsert.side_effect.stderr = b"error_output"
+def test_CalledProcessError(core):
+    error = core.pr_upsert.side_effect = CalledProcessError(23, sentinel.cmd)
 
     with pytest.raises(CalledProcessError) as exc_info:
         cli([])
 
-    core.pr_upsert.assert_called_once_with()
-    assert exc_info.value.returncode == 42
-    assert capsys.readouterr().out.strip() == "error_output\noutput"
+    assert exc_info.value == error
 
 
-# If subprocess.run() is called without capture_output=True when
-# CalledProcessError.stderr and stdout are None.
-def test_cli_unexpected_exception_with_no_capture_output(core, capsys):
-    core.pr_upsert.side_effect = CalledProcessError(42, "test_command")
+def test_it_prints_stdout_and_stderr_from_CalledProcessErrors(capsys, core):
+    core.pr_upsert.side_effect = CalledProcessError(
+        23, sentinel.cmd, b"output", b"errors"
+    )
 
-    with pytest.raises(CalledProcessError) as exc_info:
+    with pytest.raises(CalledProcessError):
         cli([])
 
-    core.pr_upsert.assert_called_once_with()
-    assert exc_info.value.returncode == 42
-    assert not capsys.readouterr().out
+    assert capsys.readouterr().out.strip() == "errors\noutput"
 
 
 @pytest.fixture(autouse=True)
