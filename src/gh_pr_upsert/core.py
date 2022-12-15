@@ -1,12 +1,11 @@
 from gh_pr_upsert import git
 from gh_pr_upsert.exceptions import NoChangesError, OtherPeopleError, SameBranchError
-from gh_pr_upsert.git import GitHubRepo, PullRequest
 
 
 def pr_upsert(base_remote, head_remote, title, body, close_comment):
-    base_repo = GitHubRepo.get(base_remote)
+    base_repo = git.GitHubRepo.get(base_remote)
     base_branch = base_repo.default_branch
-    head_repo = GitHubRepo.get(head_remote)
+    head_repo = git.GitHubRepo.get(head_remote)
     head_branch = git.current_branch()
 
     # You can't send a PR to merge a branch into itself.
@@ -33,7 +32,7 @@ def pr_upsert(base_remote, head_remote, title, body, close_comment):
     local_diff = git.diff([head_branch, f"^{base_remote}/{base_branch}"])
 
     # The existing PR or None.
-    pull_request = PullRequest.get(base_repo, head_repo, head_branch)
+    pull_request = git.PullRequest.get(base_repo, head_repo, head_branch)
 
     # If there are no local changes then close any existing PR.
     if not local_diff:
@@ -60,7 +59,7 @@ def pr_upsert(base_remote, head_remote, title, body, close_comment):
 
     # Create a PR if there isn't one already.
     if not pull_request:
-        pull_request = PullRequest.create(
+        pull_request = git.PullRequest.create(
             base_repo, head_repo, head_branch, title, body
         )
 
