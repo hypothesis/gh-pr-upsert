@@ -10,7 +10,6 @@ from gh_pr_upsert.git import (
     User,
     branch_exists,
     configured_user,
-    contributors,
     current_branch,
     diff,
     log,
@@ -243,21 +242,6 @@ class TestConfiguredUser:
             call(["git", "config", "--get", "user.name"]),
             call(["git", "config", "--get", "user.email"]),
         ]
-
-
-class TestContributors:
-    def test_it(self, log, commit_factory):
-        branches = [sentinel.branch_1, sentinel.branch_2]
-        log.return_value = commits = commit_factory.create_batch(2)
-
-        returned = contributors(branches)
-
-        log.assert_called_once_with(branches)
-        assert returned == {commits[0].author, commits[1].author}
-
-    @pytest.fixture(autouse=True)
-    def log(self, mocker):
-        return mocker.patch("gh_pr_upsert.git.log", autospec=True)
 
 
 class TestCurrentBranch:

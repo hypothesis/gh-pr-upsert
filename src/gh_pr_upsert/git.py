@@ -185,11 +185,6 @@ def configured_user():
     )
 
 
-def contributors(branches: list[str]) -> list[User]:
-    """Return the list of users who've contributed to the given branches."""
-    return {commit.author for commit in log(branches)}
-
-
 def current_branch() -> str:
     """Return the name of the current local git branch."""
     return run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"])
