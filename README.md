@@ -1,5 +1,4 @@
 <a href="https://github.com/hypothesis/gh-pr-upsert/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://img.shields.io/github/workflow/status/hypothesis/gh-pr-upsert/CI/main"></a>
-<a href="https://pypi.org/project/gh-pr-upsert"><img src="https://img.shields.io/pypi/v/gh-pr-upsert"></a>
 <a><img src="https://img.shields.io/badge/python-3.10 | 3.9-success"></a>
 <a href="https://github.com/hypothesis/gh-pr-upsert/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-BSD--2--Clause-success"></a>
 <a href="https://github.com/hypothesis/cookiecutters/tree/main/pypackage"><img src="https://img.shields.io/badge/cookiecutter-pypackage-success"></a>
@@ -16,7 +15,7 @@ gh-pr-upsert.
 First [install pipx](https://pypa.github.io/pipx/#install-pipx) then run:
 
 ```terminal
-pipx install gh-pr-upsert
+pipx install git+https://github.com/hypothesis/gh-pr-upsert.git
 ```
 
 You now have gh-pr-upsert installed! For some help run:
@@ -69,20 +68,6 @@ git clone https://github.com/hypothesis/gh-pr-upsert.git
 cd gh-pr-upsert
 make help
 ```
-
-## Releasing a New Version of the Project
-
-1. First, to get PyPI publishing working you need to go to:
-   <https://github.com/organizations/hypothesis/settings/secrets/actions/PYPI_TOKEN>
-   and add gh-pr-upsert to the `PYPI_TOKEN` secret's selected
-   repositories.
-
-2. Now that the gh-pr-upsert project has access to the `PYPI_TOKEN` secret
-   you can release a new version by just [creating a new GitHub release](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository).
-   Publishing a new GitHub release will automatically trigger
-   [a GitHub Actions workflow](.github/workflows/pypi.yml)
-   that will build the new version of your Python package and upload it to
-   <https://pypi.org/project/gh-pr-upsert>.
 
 ## Changing the Project's Python Versions
 
