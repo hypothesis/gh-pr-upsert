@@ -17,6 +17,7 @@ class CommitFactory(factory.Factory):
 
     sha = factory.Faker("sha1")
     author = factory.SubFactory(UserFactory)
+    committer = factory.SubFactory(UserFactory)
 
 
 class GitHubRepoFactory(factory.Factory):

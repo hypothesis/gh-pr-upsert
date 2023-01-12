@@ -212,8 +212,11 @@ class TestPRUpsert:
 
         # Make `git log` return two commits both by the configured user.
         git.configured_user.return_value = user
+
         git.log.return_value = commit_factory.create_batch(
-            2, author=git.configured_user.return_value
+            2,
+            author=git.configured_user.return_value,
+            committer=git.configured_user.return_value,
         )
 
         return git

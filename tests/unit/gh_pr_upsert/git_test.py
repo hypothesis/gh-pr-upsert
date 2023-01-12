@@ -23,6 +23,8 @@ class TestCommit:
             sentinel.full_sha,
             sentinel.author_name,
             sentinel.author_email,
+            sentinel.committer_name,
+            sentinel.committer_email,
         ]
 
         commit = Commit.get(sentinel.sha)
@@ -31,10 +33,15 @@ class TestCommit:
             call(["git", "show", "--no-patch", "--format=%H", sentinel.sha]),
             call(["git", "show", "--no-patch", "--format=%an", sentinel.sha]),
             call(["git", "show", "--no-patch", "--format=%ae", sentinel.sha]),
+            call(["git", "show", "--no-patch", "--format=%cn", sentinel.sha]),
+            call(["git", "show", "--no-patch", "--format=%ce", sentinel.sha]),
         ]
         assert commit == Commit(
             sha=sentinel.full_sha,
             author=User(name=sentinel.author_name, email=sentinel.author_email),
+            committer=User(
+                name=sentinel.committer_name, email=sentinel.committer_email
+            ),
         )
 
 
