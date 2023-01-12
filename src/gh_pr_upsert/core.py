@@ -18,17 +18,25 @@ def pr_upsert(
         raise SameBranchError()
 
     # The list of users who have commits on the remote branch.
-    other_contributors = {
-        commit.author
-        for commit in git.log(
-            (
-                f"{head_repo.remote}/{head_branch}",
-                f"^{local_branch}",
-                f"^{base_repo.remote}/{base_branch}",
-            )
+    commits = git.log(
+        (
+            f"{head_repo.remote}/{head_branch}",
+            f"^{local_branch}",
+            f"^{base_repo.remote}/{base_branch}",
         )
-        if commit.author != git.configured_user()
+    )
+
+    other_authors = {
+        commit.author for commit in commits if commit.author != git.configured_user()
     }
+
+    other_committers = {
+        commit.committer
+        for commit in commits
+        if commit.committer != git.configured_user()
+    }
+
+    other_contributors = other_authors | other_committers
 
     # The changes that we have locally.
     local_diff = git.diff((local_branch, f"^{base_repo.remote}/{base_branch}"))

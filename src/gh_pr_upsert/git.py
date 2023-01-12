@@ -17,6 +17,7 @@ class User:
 class Commit:
     sha: str
     author: User
+    committer: User
 
     @classmethod
     @cache
@@ -33,6 +34,10 @@ class Commit:
             author=User(
                 name=git_show("%an"),
                 email=git_show("%ae"),
+            ),
+            committer=User(
+                name=git_show("%cn"),
+                email=git_show("%ce"),
             ),
         )
 
