@@ -1,4 +1,5 @@
 """Helpers for working with Git and GitHub."""
+
 from dataclasses import dataclass, field
 from functools import cache
 from subprocess import CalledProcessError

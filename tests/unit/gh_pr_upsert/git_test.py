@@ -327,7 +327,6 @@ class TestPush:
 def clear_caches():
     yield
 
-    # pylint:disable=no-member
     branch_exists.cache_clear()
     configured_user.cache_clear()
     current_branch.cache_clear()
