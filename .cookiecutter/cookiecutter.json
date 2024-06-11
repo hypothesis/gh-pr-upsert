@@ -8,7 +8,7 @@
     "package_name": "gh_pr_upsert",
     "slug": "gh-pr-upsert",
     "short_description": "Upsert GitHub pull requests.",
-    "python_versions": "3.10.6, 3.9.13",
+    "python_versions": "3.12.4, 3.11.9, 3.10.14, 3.9.19",
     "github_owner": "hypothesis",
     "copyright_holder": "Hypothesis",
     "visibility": "public",
