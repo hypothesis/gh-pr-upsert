@@ -105,7 +105,7 @@ class PullRequest:
     @classmethod
     def create(
         cls, base_repo, base_branch, head_repo, head_branch, title, body
-    ):  # pylint: disable=too-many-arguments
+    ):  # pylint: disable=too-many-arguments,too-many-positional-arguments
         json = run(
             [
                 "gh",

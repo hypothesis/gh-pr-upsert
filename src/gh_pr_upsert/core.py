@@ -11,7 +11,7 @@ def pr_upsert(
     title,
     body,
     close_comment,
-):  # pylint:disable=too-many-arguments
+):  # pylint:disable=too-many-arguments,too-many-positional-arguments
     # You can't send a PR to merge a branch into itself.
     if base_repo == head_repo and base_branch == head_branch:
         raise SameBranchError()
