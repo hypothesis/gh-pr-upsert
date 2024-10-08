@@ -19,7 +19,6 @@
     "__entry_point": "gh-pr-upsert",
     "__github_url": "https://github.com/hypothesis/gh-pr-upsert",
     "__pypi_url": "https://pypi.org/project/gh-pr-upsert",
-    "__hdev_project_type": "library",
     "__copyright_year": "2022"
   }
 }
